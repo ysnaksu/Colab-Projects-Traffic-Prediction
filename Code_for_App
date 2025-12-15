@@ -1,0 +1,145 @@
+# =========================
+# STEP 0 – Libraries
+# =========================
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, r2_score
+import ipywidgets as widgets
+from IPython.display import display
+
+# =========================
+# STEP 1 – Load Data
+# =========================
+df = pd.read_excel("/content/traffic_volume_interstate.xlsx")
+
+# =========================
+# STEP 2 – Date-Time Feature Engineering
+# =========================
+df['date_time'] = pd.to_datetime(df['date_time'])
+df['hour'] = df['date_time'].dt.hour
+df['day'] = df['date_time'].dt.day
+df['month'] = df['date_time'].dt.month
+df['weekday'] = df['date_time'].dt.weekday
+df['is_weekend'] = df['weekday'].apply(lambda x: 1 if x >= 5 else 0)
+
+# Drop unused columns
+df = df.drop(columns=['date_time', 'weather_description'])
+
+# =========================
+# STEP 3 – Define Features
+# =========================
+X = df.drop('traffic_volume', axis=1)
+y = df['traffic_volume']
+
+categorical_features = ['holiday', 'weather_main']
+numerical_features = [
+    'temp', 'rain_1h', 'snow_1h', 'clouds_all',
+    'hour', 'day', 'month', 'weekday', 'is_weekend'
+]
+
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features),
+        ('num', 'passthrough', numerical_features)
+    ]
+)
+
+model = RandomForestRegressor(
+    n_estimators=150,
+    random_state=42,
+    n_jobs=-1
+)
+
+pipeline = Pipeline(steps=[
+    ('preprocess', preprocessor),
+    ('model', model)
+])
+
+# =========================
+# STEP 4 – Train/Test Split & Fit Model
+# =========================
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+pipeline.fit(X_train, y_train)
+
+# Evaluate Model
+y_pred = pipeline.predict(X_test)
+print("MAE:", mean_absolute_error(y_test, y_pred))
+print("R2 :", r2_score(y_test, y_pred))
+
+# =========================
+# STEP 5 – Interactive Mini App
+# =========================
+date_input = widgets.Text(
+    description='DateTime:',
+    placeholder='YYYY-MM-DD HH:MM'
+)
+temp_input = widgets.FloatText(description='Temp:')
+rain_input = widgets.FloatText(description='Rain:')
+snow_input = widgets.FloatText(description='Snow:')
+clouds_input = widgets.IntText(description='Clouds %')
+holiday_input = widgets.Dropdown(
+    options=['None', 'Christmas Day', 'New Years Day'],
+    description='Holiday:'
+)
+weather_input = widgets.Dropdown(
+    options=['Clear', 'Clouds', 'Rain', 'Snow', 'Mist'],
+    description='Weather:'
+)
+button = widgets.Button(description="Predict Traffic")
+output = widgets.Output()
+
+def predict_traffic(b):
+    with output:
+        output.clear_output()
+        dt = pd.to_datetime(date_input.value)
+        input_df = pd.DataFrame([{
+            'holiday': holiday_input.value,
+            'weather_main': weather_input.value,
+            'temp': temp_input.value,
+            'rain_1h': rain_input.value,
+            'snow_1h': snow_input.value,
+            'clouds_all': clouds_input.value,
+            'hour': dt.hour,
+            'day': dt.day,
+            'month': dt.month,
+            'weekday': dt.weekday(),
+            'is_weekend': 1 if dt.weekday() >= 5 else 0
+        }])
+        prediction = pipeline.predict(input_df)[0]
+        print(f"Estimated Traffic Volume: {int(prediction)}")
+
+button.on_click(predict_traffic)
+display(
+    date_input,
+    temp_input,
+    rain_input,
+    snow_input,
+    clouds_input,
+    holiday_input,
+    weather_input,
+    button,
+    output
+)
+
+# =========================
+# STEP 6 – Feature Importance
+# =========================
+rf_model = pipeline.named_steps['model']
+feature_names_cat = pipeline.named_steps['preprocess'].transformers_[0][1].get_feature_names_out(categorical_features)
+feature_names_num = numerical_features
+feature_names = list(feature_names_cat) + feature_names_num
+
+importances = rf_model.feature_importances_
+fi_df = pd.DataFrame({
+    'feature': feature_names,
+    'importance': importances
+}).sort_values(by='importance', ascending=False)
+print(fi_df)
